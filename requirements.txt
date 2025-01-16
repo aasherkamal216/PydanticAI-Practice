@@ -1,0 +1,5 @@
+pydantic-ai
+Crawl4AI
+ipykernel
+python-dotenv
+rich
