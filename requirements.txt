@@ -6,3 +6,6 @@ rich
 google-generativeai
 groq
 supabase
+langchain-google-genai
+streamlit
+logfire

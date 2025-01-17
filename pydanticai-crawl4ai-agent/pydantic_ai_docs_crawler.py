@@ -14,8 +14,9 @@ from dotenv import load_dotenv
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
 from groq import AsyncGroq
 import google.generativeai as genai
+from langchain_google_genai import ChatGoogleGenerativeAI
 from supabase import create_client, Client
-
+from pydantic import BaseModel
 load_dotenv()
 
 # Initialize Groq, Gemini and Supabase clients
@@ -25,6 +26,16 @@ supabase: Client = create_client(
     os.getenv("SUPABASE_SERVICE_KEY")
 )
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+
+class OutputFormat(BaseModel):
+    title: str
+    summary: str
+
+gemini_model = ChatGoogleGenerativeAI(
+    model="gemini-1.5-flash", 
+    temperature=0,
+    api_key=os.getenv("GEMINI_API_KEY")
+    ).with_structured_output(OutputFormat)
 
 @dataclass
 class ProcessedChunk:
@@ -81,25 +92,26 @@ def chunk_text(text: str, chunk_size: int = 4000) -> List[str]:
 
     return chunks
 
-async def get_title_and_summary(chunk: str, url: str) -> Dict[str, str]:
-    """Extract title and summary using Llama 3.3."""
+def get_title_and_summary(chunk: str, url: str) -> Dict[str, str]:
+    """Extract title and summary using Gemini."""
+
     system_prompt = """You are an AI that extracts titles and summaries from documentation chunks.
-    Return a JSON object with 'title' and 'summary' keys.
+    Return the 'title' and 'summary'.
     For the title: If this seems like the start of a document, extract its title. If it's a middle chunk, derive a descriptive title.
     For the summary: Create a concise summary of the main points in this chunk.
     Keep both title and summary concise but informative."""
     
     try:
-        response = await groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"URL: {url}\n\nContent:\n{chunk[:1000]}..."}  # Send first 1000 chars for context
-            ],
-            response_format={ "type": "json_object" }
+        response = gemini_model.invoke(
+        [
+            ("system", system_prompt),
+            ("human", f"URL: {url}\n\nContent:\n{chunk[:1000]}..."),
+        ]
+
         )
+  
         sleep(3) # make sure we don't hit rate limit
-        return json.loads(response.choices[0].message.content)
+        return response.model_dump(mode="json")
     except Exception as e:
         print(f"Error getting title and summary: {e}")
         return {"title": "Error processing title", "summary": "Error processing summary"}
@@ -120,7 +132,7 @@ async def get_embedding(text: str) -> List[float]:
 async def process_chunk(chunk: str, chunk_number: int, url: str) -> ProcessedChunk:
     """Process a single chunk of text."""
     # Get title and summary
-    extracted = await get_title_and_summary(chunk, url)
+    extracted = get_title_and_summary(chunk, url)
     
     # Get embedding
     embedding = await get_embedding(chunk)

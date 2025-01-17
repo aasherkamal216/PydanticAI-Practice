@@ -8,22 +8,22 @@ import httpx
 import os
 
 from pydantic_ai import Agent, ModelRetry, RunContext
-from pydantic_ai.models.openai import OpenAIModel
-from openai import AsyncOpenAI
+from pydantic_ai.models.gemini import GeminiModel
+from google import generativeai as genai
 from supabase import Client
 from typing import List
 
 load_dotenv()
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 llm = os.getenv('LLM_MODEL')
-model = OpenAIModel(llm)
+model = GeminiModel(llm, api_key=os.getenv("GEMINI_API_KEY"))
 
 logfire.configure(send_to_logfire='if-token-present')
 
 @dataclass
 class PydanticAIDeps:
     supabase: Client
-    openai_client: AsyncOpenAI
 
 system_prompt = """
 You are an expert at Pydantic AI - a Python AI agent framework that you have access to all the documentation to,
@@ -46,17 +46,17 @@ pydantic_ai_expert = Agent(
     retries=2
 )
 
-async def get_embedding(text: str, openai_client: AsyncOpenAI) -> List[float]:
+async def get_embedding(text: str) -> List[float]:
     """Get embedding vector from OpenAI."""
     try:
-        response = await openai_client.embeddings.create(
-            model="text-embedding-3-small",
-            input=text
+        response = genai.embed_content(
+            model="models/text-embedding-004",
+            content=text
         )
-        return response.data[0].embedding
+        return response["embedding"]
     except Exception as e:
         print(f"Error getting embedding: {e}")
-        return [0] * 1536  # Return zero vector on error
+        return [0] * 768  # Return zero vector on error
 
 @pydantic_ai_expert.tool
 async def retrieve_relevant_documentation(ctx: RunContext[PydanticAIDeps], user_query: str) -> str:
@@ -72,7 +72,7 @@ async def retrieve_relevant_documentation(ctx: RunContext[PydanticAIDeps], user_
     """
     try:
         # Get the embedding for the query
-        query_embedding = await get_embedding(user_query, ctx.deps.openai_client)
+        query_embedding = await get_embedding(user_query)
         
         # Query Supabase for relevant documents
         result = ctx.deps.supabase.rpc(
